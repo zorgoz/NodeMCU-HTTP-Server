@@ -7,17 +7,19 @@ function urlDecode(url)
 	end)
 end
 
+types = {
+        ['.css'] = 'text/css', 
+        ['.js'] = 'application/javascript', 
+        ['.html'] = 'text/html',
+        ['.png'] = 'image/png',
+        ['.jpg'] = 'image/jpeg',
+        ['.lua'] = 'hidden',
+        ['.lc'] = 'hidden'
+    }
+
 function guessType(filename)
-	local types = {
-		['.css'] = 'text/css', 
-		['.js'] = 'application/javascript', 
-		['.html'] = 'text/html',
-		['.png'] = 'image/png',
-		['.jpg'] = 'image/jpeg'
-	}
 	for ext, type in pairs(types) do
-		if string.sub(filename, -string.len(ext)) == ext
-			or string.sub(filename, -string.len(ext .. '.gz')) == ext .. '.gz' then
+		if string.sub(filename, -string.len(ext)) == ext then
 			return type
 		end
 	end
@@ -84,9 +86,11 @@ function Res:send(body)
 end
 
 function Res:sendFile(filename)
+    local type = guessType(filename)
+
 	if file.exists(filename .. '.gz') then
 		filename = filename .. '.gz'
-	elseif not file.exists(filename) then
+	elseif (not file.exists(filename)) or (type == 'hidden') then
 		self:status(404)
 		if filename == '404.html' then
 			self:send(404)
@@ -99,27 +103,27 @@ function Res:sendFile(filename)
 	self._status = self._status or 200
 	local header = 'HTTP/1.1 ' .. self._status .. '\r\n'
 	
-	self._type = self._type or guessType(filename)
-
+	self._type = self._type or type
+ 
 	header = header .. 'Content-Type: ' .. self._type .. '\r\n'
 	if string.sub(filename, -3) == '.gz' then
 		header = header .. 'Content-Encoding: gzip\r\n'
 	end
 	header = header .. '\r\n'
 
-	print('* Sending ', filename)
+	print('* Sending ', filename, ' as ', self._type)
 	local pos = 0
 	local function doSend()
-		file.open(filename, 'r')
-		if file.seek('set', pos) == nil then
+		local src = file.open(filename, 'r')
+		if src:seek('set', pos) == nil then
 			self:close()
 			print('* Finished ', filename)
 		else
-			local buf = file.read(512)
+			local buf = src:read(512)
 			pos = pos + 512
 			self._skt:send(buf)
 		end
-		file.close()
+		src:close()
 	end
 	self._skt:on('sent', doSend)
 	
@@ -137,12 +141,12 @@ end
 -- Middleware
 --------------------
 function parseHeader(req, res)
-	local _, _, method, path, vars = string.find(req.source, '([A-Z]+) (.+)?(.*) HTTP')
+	local _, _, method, path, vars = string.find(req.source, '([A-Z]+) (.+)?(.+) HTTP')
 	if method == nil then
 		_, _, method, path = string.find(req.source, '([A-Z]+) (.+) HTTP')
 	end
 	local _GET = {}
-	if (vars ~= nil and vars ~= '') then
+	if vars ~= nil and vars ~= '' then
 		vars = urlDecode(vars)
 		for k, v in string.gmatch(vars, '([^&]+)=([^&]*)&*') do
 			_GET[k] = v
